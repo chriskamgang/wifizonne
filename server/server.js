@@ -1,99 +1,32 @@
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
-const { RouterOSAPI } = require("node-routeros");
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
+const MIKROTIK_SECRET = process.env.MIKROTIK_SECRET || "insam2026wifi";
 
 // ============================================
 // STOCKAGE EN MÉMOIRE DES TRANSACTIONS
-// (En production, utiliser une base de données)
 // ============================================
 const transactions = new Map();
+// File d'attente des users à créer sur Mikrotik
+const pendingUsers = [];
 
 // ============================================
 // PLANS WIFI - correspondance avec Mikrotik
 // ============================================
 const PLANS = {
-  "30min":     { profile: "wifi-30min",   duration: "00:30:00", speed: "2M/2M" },
-  "1h":        { profile: "wifi-1h",      duration: "01:00:00", speed: "5M/3M" },
-  "3h":        { profile: "wifi-3h",      duration: "03:00:00", speed: "5M/3M" },
-  "1jour":     { profile: "wifi-1jour",   duration: "1d 00:00:00", speed: "10M/5M" },
+  "30min":     { profile: "wifi-30min",    duration: "00:30:00", speed: "2M/2M" },
+  "1h":        { profile: "wifi-1h",       duration: "01:00:00", speed: "5M/3M" },
+  "3h":        { profile: "wifi-3h",       duration: "03:00:00", speed: "5M/3M" },
+  "1jour":     { profile: "wifi-1jour",    duration: "1d 00:00:00", speed: "10M/5M" },
   "1semaine":  { profile: "wifi-1semaine", duration: "7d 00:00:00", speed: "10M/5M" },
-  "1mois":     { profile: "wifi-1mois",   duration: "30d 00:00:00", speed: "15M/10M" },
+  "1mois":     { profile: "wifi-1mois",    duration: "30d 00:00:00", speed: "15M/10M" },
 };
-
-// ============================================
-// CONNEXION MIKROTIK
-// ============================================
-async function getMikrotikConnection() {
-  const conn = new RouterOSAPI({
-    host: process.env.MIKROTIK_HOST,
-    port: parseInt(process.env.MIKROTIK_PORT) || 8728,
-    user: process.env.MIKROTIK_USER,
-    password: process.env.MIKROTIK_PASSWORD,
-    timeout: 10,
-  });
-  await conn.connect();
-  return conn;
-}
-
-// ============================================
-// CRÉER UN UTILISATEUR HOTSPOT SUR MIKROTIK
-// ============================================
-async function createHotspotUser(reference, planId) {
-  const plan = PLANS[planId];
-  if (!plan) {
-    console.error("Plan inconnu:", planId);
-    return false;
-  }
-
-  let conn;
-  try {
-    conn = await getMikrotikConnection();
-
-    // Créer le user profile s'il n'existe pas
-    const profiles = await conn.write("/ip/hotspot/user/profile/print", [
-      "?name=" + plan.profile,
-    ]);
-
-    if (profiles.length === 0) {
-      await conn.write("/ip/hotspot/user/profile/add", [
-        "=name=" + plan.profile,
-        "=rate-limit=" + plan.speed,
-        "=session-timeout=" + plan.duration,
-        "=shared-users=1",
-      ]);
-      console.log("Profile créé:", plan.profile);
-    }
-
-    // Créer l'utilisateur hotspot
-    const username = "wifi_" + reference;
-    const password = reference;
-
-    await conn.write("/ip/hotspot/user/add", [
-      "=name=" + username,
-      "=password=" + password,
-      "=profile=" + plan.profile,
-      "=limit-uptime=" + plan.duration,
-      "=comment=FreeMoPay:" + reference,
-    ]);
-
-    console.log("User hotspot créé:", username, "| Plan:", plan.profile);
-    return true;
-  } catch (err) {
-    console.error("Erreur Mikrotik:", err.message);
-    return false;
-  } finally {
-    if (conn) {
-      try { conn.close(); } catch (e) {}
-    }
-  }
-}
 
 // ============================================
 // ROUTE: Initier un paiement (appelé par la page captive)
@@ -108,7 +41,6 @@ app.post("/api/payment/init", async (req, res) => {
   const externalId = "INSAM-" + Date.now().toString(36) + "-" + Math.random().toString(36).substring(2, 8);
   const callbackUrl = req.protocol + "://" + req.get("host") + "/api/webhook/freemopay";
 
-  // Appel FreeMoPay v2
   try {
     const credentials = Buffer.from(
       process.env.FREEMOPAY_APP_KEY + ":" + process.env.FREEMOPAY_SECRET_KEY
@@ -131,7 +63,6 @@ app.post("/api/payment/init", async (req, res) => {
     const data = await response.json();
 
     if (data.reference) {
-      // Stocker la transaction
       transactions.set(data.reference, {
         reference: data.reference,
         externalId: externalId,
@@ -141,6 +72,7 @@ app.post("/api/payment/init", async (req, res) => {
         macAddress: macAddress || "",
         ipAddress: ipAddress || "",
         status: "PENDING",
+        mikrotikCreated: false,
         createdAt: new Date(),
       });
 
@@ -172,10 +104,21 @@ app.post("/api/webhook/freemopay", async (req, res) => {
   transaction.status = status;
 
   if (status === "SUCCESS") {
-    // Créer l'utilisateur sur le Mikrotik
-    const created = await createHotspotUser(reference, transaction.planId);
-    transaction.mikrotikCreated = created;
-    console.log("Paiement SUCCESS:", reference, "| Mikrotik user créé:", created);
+    const plan = PLANS[transaction.planId];
+    if (plan) {
+      // Ajouter à la file d'attente pour le Mikrotik
+      pendingUsers.push({
+        username: "wifi_" + reference,
+        password: reference,
+        profile: plan.profile,
+        duration: plan.duration,
+        speed: plan.speed,
+        reference: reference,
+        createdAt: new Date().toISOString(),
+      });
+      transaction.mikrotikCreated = true;
+      console.log("Paiement SUCCESS:", reference, "| User ajouté à la file Mikrotik");
+    }
   } else {
     console.log("Paiement FAILED:", reference, "| Message:", message);
   }
@@ -202,20 +145,32 @@ app.get("/api/payment/status/:reference", (req, res) => {
 });
 
 // ============================================
-// ROUTE: Santé du serveur
+// ROUTE: Mikrotik récupère les users à créer
+// Le Mikrotik appelle cette URL toutes les 30s
+// GET /api/mikrotik/pending-users?secret=insam2026wifi
 // ============================================
-app.get("/api/health", async (req, res) => {
-  let mikrotikOk = false;
-  try {
-    const conn = await getMikrotikConnection();
-    await conn.write("/system/identity/print");
-    conn.close();
-    mikrotikOk = true;
-  } catch (e) {}
+app.get("/api/mikrotik/pending-users", (req, res) => {
+  // Vérification du secret
+  if (req.query.secret !== MIKROTIK_SECRET) {
+    return res.status(403).json({ error: "Accès refusé" });
+  }
+
+  // Renvoyer tous les users en attente
+  const users = pendingUsers.splice(0, pendingUsers.length);
 
   res.json({
+    count: users.length,
+    users: users,
+  });
+});
+
+// ============================================
+// ROUTE: Santé du serveur
+// ============================================
+app.get("/api/health", (req, res) => {
+  res.json({
     status: "ok",
-    mikrotik: mikrotikOk ? "connected" : "disconnected",
+    pendingUsers: pendingUsers.length,
     transactions: transactions.size,
     uptime: process.uptime(),
   });
@@ -228,6 +183,6 @@ app.listen(PORT, () => {
   console.log("=".repeat(50));
   console.log("  IUEs/INSAM WiFi Server");
   console.log("  Port:", PORT);
-  console.log("  Mikrotik:", process.env.MIKROTIK_HOST);
+  console.log("  Mode: Mikrotik polling");
   console.log("=".repeat(50));
 });
