@@ -38,8 +38,11 @@ app.post("/api/payment/init", async (req, res) => {
     return res.status(400).json({ error: "Champs requis: phone, amount, planId" });
   }
 
+  // S'assurer que le numéro commence par 237
+  const formattedPhone = String(phone).startsWith("237") ? String(phone) : "237" + String(phone);
   const externalId = "INSAM-" + Date.now().toString(36) + "-" + Math.random().toString(36).substring(2, 8);
   const callbackUrl = "https://wifizone.iues-insambot.com/api/webhook/freemopay";
+  console.log("Paiement demandé - Tél:", formattedPhone, "| Montant:", amount, "| Callback:", callbackUrl);
 
   try {
     const credentials = Buffer.from(
@@ -53,7 +56,7 @@ app.post("/api/payment/init", async (req, res) => {
         "Authorization": "Basic " + credentials,
       },
       body: JSON.stringify({
-        payer: String(phone),
+        payer: formattedPhone,
         amount: String(amount),
         externalId: externalId,
         callback: callbackUrl,
