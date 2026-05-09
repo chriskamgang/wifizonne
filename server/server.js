@@ -39,7 +39,7 @@ app.post("/api/payment/init", async (req, res) => {
   }
 
   const externalId = "INSAM-" + Date.now().toString(36) + "-" + Math.random().toString(36).substring(2, 8);
-  const callbackUrl = req.protocol + "://" + req.get("host") + "/api/webhook/freemopay";
+  const callbackUrl = "https://wifizone.iues-insambot.com/api/webhook/freemopay";
 
   try {
     const credentials = Buffer.from(
@@ -61,6 +61,7 @@ app.post("/api/payment/init", async (req, res) => {
     });
 
     const data = await response.json();
+    console.log("FreeMoPay réponse:", JSON.stringify(data));
 
     if (data.reference) {
       transactions.set(data.reference, {
