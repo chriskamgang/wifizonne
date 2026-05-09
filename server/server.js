@@ -53,8 +53,8 @@ app.post("/api/payment/init", async (req, res) => {
         "Authorization": "Basic " + credentials,
       },
       body: JSON.stringify({
-        phone: phone,
-        amount: amount,
+        payer: String(phone),
+        amount: String(amount),
         externalId: externalId,
         callback: callbackUrl,
       }),
