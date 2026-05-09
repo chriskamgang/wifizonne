@@ -11,7 +11,7 @@ const WIFI_CONFIG = {
   logo: "app_icon.png",
 
   // URL du serveur backend (sur ton Linode)
-  serverUrl: "https://wifi.votre-domaine.com",
+  serverUrl: "https://wifizone.iues-insambot.com",
 
   // FreeMoPay API v2 Configuration (utilisé côté serveur, pas côté client)
   // Les clés sont dans le .env du serveur, pas ici
