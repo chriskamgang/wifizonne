@@ -247,7 +247,7 @@
     // VERIFICATION STATUT VIA LE BACKEND
     // ============================================
     function checkPaymentStatus(reference, attempts) {
-      if (attempts >= 30) {
+      if (attempts >= 60) {
         showLoader(false);
         showStatus("error", "Délai d'attente dépassé. Si vous avez été débité, contactez le support.");
         return;

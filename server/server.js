@@ -1,6 +1,8 @@
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
+const fs = require("fs");
+const path = require("path");
 
 const app = express();
 app.use(cors());
@@ -8,13 +10,42 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
 const MIKROTIK_SECRET = process.env.MIKROTIK_SECRET || "insam2026wifi";
+const DB_FILE = path.join(__dirname, "transactions.json");
 
 // ============================================
-// STOCKAGE EN MÉMOIRE DES TRANSACTIONS
+// STOCKAGE PERSISTANT DES TRANSACTIONS
 // ============================================
-const transactions = new Map();
-// File d'attente des users à créer sur Mikrotik
-const pendingUsers = [];
+let transactions = new Map();
+let pendingUsers = [];
+
+// Charger les transactions sauvegardées
+function loadData() {
+  try {
+    if (fs.existsSync(DB_FILE)) {
+      const data = JSON.parse(fs.readFileSync(DB_FILE, "utf8"));
+      transactions = new Map(data.transactions || []);
+      pendingUsers = data.pendingUsers || [];
+      console.log("Données chargées:", transactions.size, "transactions,", pendingUsers.length, "users en attente");
+    }
+  } catch (e) {
+    console.error("Erreur chargement données:", e.message);
+  }
+}
+
+// Sauvegarder les transactions
+function saveData() {
+  try {
+    const data = {
+      transactions: Array.from(transactions.entries()),
+      pendingUsers: pendingUsers,
+    };
+    fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
+  } catch (e) {
+    console.error("Erreur sauvegarde:", e.message);
+  }
+}
+
+loadData();
 
 // ============================================
 // PLANS WIFI - correspondance avec Mikrotik
@@ -29,7 +60,7 @@ const PLANS = {
 };
 
 // ============================================
-// ROUTE: Initier un paiement (appelé par la page captive)
+// ROUTE: Initier un paiement
 // ============================================
 app.post("/api/payment/init", async (req, res) => {
   const { phone, amount, planId, macAddress, ipAddress } = req.body;
@@ -38,11 +69,11 @@ app.post("/api/payment/init", async (req, res) => {
     return res.status(400).json({ error: "Champs requis: phone, amount, planId" });
   }
 
-  // S'assurer que le numéro commence par 237
   const formattedPhone = String(phone).startsWith("237") ? String(phone) : "237" + String(phone);
   const externalId = "INSAM-" + Date.now().toString(36) + "-" + Math.random().toString(36).substring(2, 8);
   const callbackUrl = "https://wifizone.iues-insambot.com/api/webhook/freemopay";
-  console.log("Paiement demandé - Tél:", formattedPhone, "| Montant:", amount, "| Callback:", callbackUrl);
+
+  console.log("Paiement demandé - Tél:", formattedPhone, "| Montant:", amount);
 
   try {
     const credentials = Buffer.from(
@@ -71,14 +102,15 @@ app.post("/api/payment/init", async (req, res) => {
         reference: data.reference,
         externalId: externalId,
         planId: planId,
-        phone: phone,
+        phone: formattedPhone,
         amount: amount,
         macAddress: macAddress || "",
         ipAddress: ipAddress || "",
         status: "PENDING",
         mikrotikCreated: false,
-        createdAt: new Date(),
+        createdAt: new Date().toISOString(),
       });
+      saveData();
 
       console.log("Paiement initié:", data.reference, "| Plan:", planId, "| Montant:", amount);
       return res.json({ reference: data.reference, status: "PENDING" });
@@ -110,7 +142,6 @@ app.post("/api/webhook/freemopay", async (req, res) => {
   if (status === "SUCCESS") {
     const plan = PLANS[transaction.planId];
     if (plan) {
-      // Ajouter à la file d'attente pour le Mikrotik
       pendingUsers.push({
         username: "wifi_" + reference,
         password: reference,
@@ -127,12 +158,12 @@ app.post("/api/webhook/freemopay", async (req, res) => {
     console.log("Paiement FAILED:", reference, "| Message:", message);
   }
 
+  saveData();
   res.status(200).json({ received: true });
 });
 
 // ============================================
 // ROUTE: Vérifier le statut d'un paiement
-// (appelé par la page captive en polling)
 // ============================================
 app.get("/api/payment/status/:reference", (req, res) => {
   const transaction = transactions.get(req.params.reference);
@@ -150,17 +181,16 @@ app.get("/api/payment/status/:reference", (req, res) => {
 
 // ============================================
 // ROUTE: Mikrotik récupère les users à créer
-// Le Mikrotik appelle cette URL toutes les 30s
-// GET /api/mikrotik/pending-users?secret=insam2026wifi
 // ============================================
 app.get("/api/mikrotik/pending-users", (req, res) => {
-  // Vérification du secret
   if (req.query.secret !== MIKROTIK_SECRET) {
     return res.status(403).json({ error: "Accès refusé" });
   }
 
-  // Renvoyer tous les users en attente
   const users = pendingUsers.splice(0, pendingUsers.length);
+  if (users.length > 0) {
+    saveData();
+  }
 
   res.json({
     count: users.length,
