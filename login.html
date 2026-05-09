@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>IUEs/INSAM - WiFi Zone</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="icon" href="app_icon.png" type="image/png">
+</head>
+<body>
+
+  <!-- Variables Mikrotik (seront remplacées par le routeur) -->
+  <!-- $(mac) = MAC client, $(ip) = IP client, $(username) = username -->
+  <!-- $(link-login-only) = URL login, $(link-orig) = URL originale -->
+
+  <div class="header">
+    <div class="wifi-icon">&#128246;</div>
+    <img src="app_icon.png" alt="IUEs/INSAM" class="logo">
+    <h1 id="zoneName">IUEs/INSAM WiFi Zone</h1>
+    <p class="subtitle" id="subtitle">Institut Universitaire et Stratégique de l'Estuaire</p>
+  </div>
+
+  <div class="container">
+    <!-- Forfaits -->
+    <div class="plans-section">
+      <h2>Choisissez votre forfait</h2>
+      <div class="plans-grid" id="plansGrid">
+        <!-- Plans injectés dynamiquement depuis config.js -->
+      </div>
+    </div>
+
+    <!-- Paiement -->
+    <div class="payment-section" id="paymentSection" style="display: none;">
+      <h2>Paiement Mobile Money</h2>
+
+      <div class="payment-methods">
+        <div class="payment-method mtn" data-method="mtn_momo" onclick="selectPaymentMethod('mtn_momo')">
+          <div class="method-icon">&#128241;</div>
+          <div class="method-name">MTN MoMo</div>
+        </div>
+        <div class="payment-method orange" data-method="orange_money" onclick="selectPaymentMethod('orange_money')">
+          <div class="method-icon">&#128241;</div>
+          <div class="method-name">Orange Money</div>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label for="phoneNumber">Numéro de téléphone</label>
+        <input type="tel" id="phoneNumber" placeholder="Ex: 6XXXXXXXX" maxlength="9" pattern="[0-9]{9}">
+      </div>
+
+      <div class="form-group">
+        <label>Forfait sélectionné</label>
+        <div id="selectedPlanSummary" style="padding: 12px; background: rgba(0,180,216,0.1); border-radius: 10px; font-size: 0.95em;"></div>
+      </div>
+
+      <button class="btn-pay" id="btnPay" onclick="initiatePayment()" disabled>
+        Payer maintenant
+      </button>
+
+      <!-- Loader -->
+      <div class="loader" id="loader">
+        <div class="spinner"></div>
+        <p>Traitement du paiement en cours...</p>
+        <p style="font-size: 0.8em; color: rgba(255,255,255,0.5); margin-top: 5px;">
+          Validez la demande sur votre téléphone
+        </p>
+      </div>
+
+      <!-- Status -->
+      <div class="status-message" id="statusMessage"></div>
+    </div>
+  </div>
+
+  <div class="footer" id="footer">
+    <p>&copy; 2026 IUEs/INSAM - Tous droits réservés</p>
+  </div>
+
+  <!-- Formulaire caché pour le login Mikrotik -->
+  <form name="login" action="$(link-login-only)" method="post" style="display:none;">
+    <input type="hidden" name="username" value="">
+    <input type="hidden" name="password" value="">
+    <input type="hidden" name="dst" value="$(link-orig)">
+    <input type="hidden" name="popup" value="true">
+  </form>
+
+  <script src="config.js"></script>
+  <script>
+    // ============================================
+    // VARIABLES
+    // ============================================
+    let selectedPlan = null;
+    let selectedMethod = null;
+    let currentReference = null;
+
+    // Variables Mikrotik (remplacées côté routeur)
+    const MIKROTIK = {
+      mac: "$(mac)",
+      ip: "$(ip)",
+      username: "$(username)",
+      loginUrl: "$(link-login-only)",
+      origUrl: "$(link-orig)",
+      interfaceName: "$(interface-name)",
+      identity: "$(identity)"
+    };
+
+    // ============================================
+    // INITIALISATION
+    // ============================================
+    document.addEventListener('DOMContentLoaded', function() {
+      renderPlans();
+      applyConfig();
+    });
+
+    function applyConfig() {
+      document.getElementById('zoneName').textContent = WIFI_CONFIG.zoneName;
+      document.getElementById('subtitle').textContent = WIFI_CONFIG.messages.subtitle;
+    }
+
+    // ============================================
+    // AFFICHAGE DES FORFAITS
+    // ============================================
+    function renderPlans() {
+      const grid = document.getElementById('plansGrid');
+      grid.innerHTML = '';
+
+      WIFI_CONFIG.plans.forEach(function(plan) {
+        const card = document.createElement('div');
+        card.className = 'plan-card';
+        card.setAttribute('data-plan-id', plan.id);
+        card.onclick = function() { selectPlan(plan.id); };
+
+        card.innerHTML =
+          '<div class="plan-name">' + plan.name + '</div>' +
+          '<div class="plan-price">' + plan.price.toLocaleString() + ' <span class="currency">' + plan.currency + '</span></div>' +
+          '<div class="plan-description">' + plan.description + '</div>' +
+          '<div class="plan-speed">' + plan.speed + '</div>';
+
+        grid.appendChild(card);
+      });
+    }
+
+    // ============================================
+    // SELECTION FORFAIT
+    // ============================================
+    function selectPlan(planId) {
+      selectedPlan = WIFI_CONFIG.plans.find(function(p) { return p.id === planId; });
+      if (!selectedPlan) return;
+
+      // UI update
+      document.querySelectorAll('.plan-card').forEach(function(card) {
+        card.classList.remove('selected');
+      });
+      document.querySelector('[data-plan-id="' + planId + '"]').classList.add('selected');
+
+      // Afficher section paiement
+      document.getElementById('paymentSection').style.display = 'block';
+      document.getElementById('selectedPlanSummary').innerHTML =
+        '<strong>' + selectedPlan.name + '</strong> - ' +
+        selectedPlan.price.toLocaleString() + ' ' + selectedPlan.currency +
+        ' <span style="color: rgba(255,255,255,0.5);">(' + selectedPlan.description + ')</span>';
+
+      updatePayButton();
+
+      // Scroll vers paiement
+      document.getElementById('paymentSection').scrollIntoView({ behavior: 'smooth' });
+    }
+
+    // ============================================
+    // SELECTION METHODE DE PAIEMENT
+    // ============================================
+    function selectPaymentMethod(method) {
+      selectedMethod = method;
+
+      document.querySelectorAll('.payment-method').forEach(function(el) {
+        el.classList.remove('selected');
+      });
+      document.querySelector('[data-method="' + method + '"]').classList.add('selected');
+
+      // Mettre à jour le placeholder du numéro
+      var phoneInput = document.getElementById('phoneNumber');
+      if (method === 'mtn_momo') {
+        phoneInput.placeholder = 'Ex: 67XXXXXXX ou 65XXXXXXX';
+      } else {
+        phoneInput.placeholder = 'Ex: 69XXXXXXX or 65XXXXXXX';
+      }
+
+      updatePayButton();
+    }
+
+    // ============================================
+    // VALIDATION
+    // ============================================
+    function updatePayButton() {
+      var phone = document.getElementById('phoneNumber').value.trim();
+      var isValid = selectedPlan && selectedMethod && phone.length === 9 && /^[0-9]{9}$/.test(phone);
+      document.getElementById('btnPay').disabled = !isValid;
+    }
+
+    document.getElementById('phoneNumber').addEventListener('input', updatePayButton);
+
+    // ============================================
+    // PAIEMENT VIA LE SERVEUR BACKEND
+    // ============================================
+    function initiatePayment() {
+      if (!selectedPlan || !selectedMethod) return;
+
+      var phone = document.getElementById('phoneNumber').value.trim();
+      if (phone.length !== 9) return;
+
+      // Afficher loader
+      showLoader(true);
+      hideStatus();
+
+      // Appel vers notre serveur backend (qui appelle FreeMoPay)
+      fetch(WIFI_CONFIG.serverUrl + "/api/payment/init", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          phone: "237" + phone,
+          amount: selectedPlan.price,
+          planId: selectedPlan.id,
+          macAddress: MIKROTIK.mac,
+          ipAddress: MIKROTIK.ip
+        })
+      })
+      .then(function(response) { return response.json(); })
+      .then(function(data) {
+        if (data.reference) {
+          currentReference = data.reference;
+          showStatus("pending", WIFI_CONFIG.messages.paymentPending);
+          checkPaymentStatus(data.reference, 0);
+        } else {
+          showLoader(false);
+          showStatus("error", data.error || WIFI_CONFIG.messages.paymentFailed);
+        }
+      })
+      .catch(function(error) {
+        showLoader(false);
+        showStatus("error", "Erreur de connexion. Vérifiez votre réseau et réessayez.");
+        console.error("Payment error:", error);
+      });
+    }
+
+    // ============================================
+    // VERIFICATION STATUT VIA LE BACKEND
+    // ============================================
+    function checkPaymentStatus(reference, attempts) {
+      if (attempts >= 30) {
+        showLoader(false);
+        showStatus("error", "Délai d'attente dépassé. Si vous avez été débité, contactez le support.");
+        return;
+      }
+
+      setTimeout(function() {
+        fetch(WIFI_CONFIG.serverUrl + "/api/payment/status/" + reference)
+        .then(function(response) { return response.json(); })
+        .then(function(data) {
+          if (data.status === "SUCCESS" && data.mikrotikReady) {
+            showLoader(false);
+            showStatus("success", WIFI_CONFIG.messages.paymentSuccess);
+            loginToMikrotik(reference);
+          } else if (data.status === "FAILED") {
+            showLoader(false);
+            showStatus("error", data.message || WIFI_CONFIG.messages.paymentFailed);
+          } else {
+            checkPaymentStatus(reference, attempts + 1);
+          }
+        })
+        .catch(function() {
+          checkPaymentStatus(reference, attempts + 1);
+        });
+      }, 5000);
+    }
+
+    // ============================================
+    // LOGIN MIKROTIK APRES PAIEMENT
+    // ============================================
+    function loginToMikrotik(transactionId) {
+      // Le username sera la référence de transaction
+      // Le mot de passe peut être le même ou un hash
+      var username = "wifi_" + transactionId;
+      var password = transactionId;
+
+      // Remplir le formulaire caché Mikrotik
+      var form = document.forms['login'];
+      if (form) {
+        form.username.value = username;
+        form.password.value = password;
+
+        // Soumettre après un court délai pour que l'utilisateur voie le message de succès
+        setTimeout(function() {
+          form.submit();
+        }, 2000);
+      }
+    }
+
+    // ============================================
+    // UTILITAIRES
+    // ============================================
+    function generateReference() {
+      var timestamp = Date.now().toString(36);
+      var random = Math.random().toString(36).substring(2, 8);
+      return "INSAM-" + timestamp + "-" + random;
+    }
+
+    function showLoader(show) {
+      document.getElementById('loader').className = show ? 'loader active' : 'loader';
+      document.getElementById('btnPay').style.display = show ? 'none' : 'block';
+    }
+
+    function showStatus(type, message) {
+      var el = document.getElementById('statusMessage');
+      el.className = 'status-message ' + type;
+      el.textContent = message;
+    }
+
+    function hideStatus() {
+      document.getElementById('statusMessage').className = 'status-message';
+      document.getElementById('statusMessage').textContent = '';
+    }
+  </script>
+
+</body>
+</html>

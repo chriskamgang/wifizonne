@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Admin - IUEs/INSAM WiFi Zone</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="icon" href="app_icon.png" type="image/png">
+</head>
+<body>
+
+  <div class="admin-container">
+    <div class="admin-header">
+      <h1>Panel Admin WiFi</h1>
+      <a href="login.html" class="btn-admin primary" style="text-decoration:none;">Voir la page portail</a>
+    </div>
+
+    <!-- Configuration Serveur -->
+    <div class="admin-section">
+      <h3>Configuration Serveur Backend</h3>
+      <div class="admin-api-form">
+        <div class="form-row">
+          <div class="form-group">
+            <label>URL du serveur backend (Linode)</label>
+            <input type="text" id="serverUrl" placeholder="https://wifi.votre-domaine.com">
+          </div>
+          <div class="form-group">
+            <label>Statut du serveur</label>
+            <div style="display:flex; gap:10px; align-items:center;">
+              <button class="btn-admin primary" onclick="checkServerHealth()">Tester la connexion</button>
+              <span id="serverStatus" style="font-size:0.85em;"></span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <p style="color: rgba(255,255,255,0.5); font-size: 0.8em; margin-top: 10px;">
+        Les clés FreeMoPay sont configurées dans le fichier .env du serveur (plus sécurisé).
+      </p>
+    </div>
+
+    <!-- Configuration Générale -->
+    <div class="admin-section">
+      <h3>Configuration Générale</h3>
+      <div class="admin-api-form">
+        <div class="form-row">
+          <div class="form-group">
+            <label>Nom de la Zone WiFi</label>
+            <input type="text" id="zoneName" placeholder="IUEs/INSAM WiFi Zone">
+          </div>
+          <div class="form-group">
+            <label>Sous-titre</label>
+            <input type="text" id="zoneSubtitle" placeholder="Institut Universitaire et Stratégique de l'Estuaire">
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Gestion des forfaits -->
+    <div class="admin-section">
+      <h3>Gestion des Forfaits</h3>
+      <div style="overflow-x: auto;">
+        <table class="admin-table" id="plansTable">
+          <thead>
+            <tr>
+              <th>Nom</th>
+              <th>Durée</th>
+              <th>Prix (XAF)</th>
+              <th>Vitesse</th>
+              <th>Description</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="plansTableBody">
+            <!-- Rempli dynamiquement -->
+          </tbody>
+        </table>
+      </div>
+      <div class="admin-actions">
+        <button class="btn-admin primary" onclick="addPlan()">+ Ajouter un forfait</button>
+        <button class="btn-admin success" onclick="saveConfig()">Sauvegarder la configuration</button>
+      </div>
+    </div>
+
+    <!-- Aperçu de la configuration -->
+    <div class="admin-section">
+      <h3>Exporter la Configuration</h3>
+      <p style="color: rgba(255,255,255,0.6); margin-bottom: 15px; font-size: 0.9em;">
+        Copiez le contenu ci-dessous et remplacez le fichier <code>config.js</code>
+      </p>
+      <textarea id="configOutput" style="width:100%; height:300px; background:rgba(0,0,0,0.3); color:#69f0ae; border:1px solid rgba(255,255,255,0.1); border-radius:10px; padding:15px; font-family:monospace; font-size:0.85em; resize:vertical;" readonly></textarea>
+      <div class="admin-actions">
+        <button class="btn-admin primary" onclick="copyConfig()">Copier la configuration</button>
+        <button class="btn-admin success" onclick="downloadConfig()">Télécharger config.js</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer">
+    <p>&copy; 2026 IUEs/INSAM - Panel Administration WiFi</p>
+  </div>
+
+  <script src="config.js"></script>
+  <script>
+    // ============================================
+    // CHARGEMENT DE LA CONFIG EXISTANTE
+    // ============================================
+    document.addEventListener('DOMContentLoaded', function() {
+      loadCurrentConfig();
+      renderPlansTable();
+    });
+
+    function loadCurrentConfig() {
+      document.getElementById('serverUrl').value = WIFI_CONFIG.serverUrl;
+      document.getElementById('zoneName').value = WIFI_CONFIG.zoneName;
+      document.getElementById('zoneSubtitle').value = WIFI_CONFIG.messages.subtitle;
+    }
+
+    function checkServerHealth() {
+      var url = document.getElementById('serverUrl').value;
+      var statusEl = document.getElementById('serverStatus');
+      statusEl.textContent = "Test en cours...";
+      statusEl.style.color = "#ffc107";
+
+      fetch(url + "/api/health")
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          statusEl.textContent = "Serveur OK | Mikrotik: " + data.mikrotik;
+          statusEl.style.color = data.mikrotik === "connected" ? "#69f0ae" : "#ff9800";
+        })
+        .catch(function() {
+          statusEl.textContent = "Serveur inaccessible";
+          statusEl.style.color = "#ff5252";
+        });
+    }
+
+    // ============================================
+    // TABLE DES FORFAITS
+    // ============================================
+    function renderPlansTable() {
+      var tbody = document.getElementById('plansTableBody');
+      tbody.innerHTML = '';
+
+      WIFI_CONFIG.plans.forEach(function(plan, index) {
+        var tr = document.createElement('tr');
+        tr.innerHTML =
+          '<td><input type="text" value="' + plan.name + '" data-field="name" data-index="' + index + '"></td>' +
+          '<td><input type="text" value="' + plan.duration + '" data-field="duration" data-index="' + index + '" style="width:70px;" placeholder="1h, 1d..."></td>' +
+          '<td><input type="number" value="' + plan.price + '" data-field="price" data-index="' + index + '" style="width:90px;"></td>' +
+          '<td><input type="text" value="' + plan.speed + '" data-field="speed" data-index="' + index + '" style="width:90px;" placeholder="5M/3M"></td>' +
+          '<td><input type="text" value="' + plan.description + '" data-field="description" data-index="' + index + '"></td>' +
+          '<td><button class="btn-admin danger" onclick="removePlan(' + index + ')">Suppr.</button></td>';
+        tbody.appendChild(tr);
+      });
+    }
+
+    // ============================================
+    // AJOUTER / SUPPRIMER FORFAIT
+    // ============================================
+    function addPlan() {
+      WIFI_CONFIG.plans.push({
+        id: "plan_" + Date.now(),
+        name: "Nouveau Forfait",
+        duration: "1h",
+        price: 0,
+        currency: "XAF",
+        speed: "5M/3M",
+        description: "Description du forfait"
+      });
+      renderPlansTable();
+    }
+
+    function removePlan(index) {
+      if (WIFI_CONFIG.plans.length <= 1) {
+        alert("Vous devez garder au moins un forfait.");
+        return;
+      }
+      if (confirm("Supprimer ce forfait ?")) {
+        WIFI_CONFIG.plans.splice(index, 1);
+        renderPlansTable();
+      }
+    }
+
+    // ============================================
+    // SAUVEGARDER
+    // ============================================
+    function saveConfig() {
+      // Lire les valeurs des inputs du tableau
+      var inputs = document.querySelectorAll('#plansTableBody input');
+      inputs.forEach(function(input) {
+        var index = parseInt(input.getAttribute('data-index'));
+        var field = input.getAttribute('data-field');
+        var value = input.value;
+
+        if (field === 'price') {
+          value = parseInt(value) || 0;
+        }
+
+        WIFI_CONFIG.plans[index][field] = value;
+      });
+
+      // Mettre à jour l'ID de chaque plan
+      WIFI_CONFIG.plans.forEach(function(plan) {
+        plan.id = plan.name.toLowerCase()
+          .replace(/[^a-z0-9]/g, '_')
+          .replace(/_+/g, '_')
+          .replace(/^_|_$/g, '');
+      });
+
+      // Mettre à jour la config serveur
+      WIFI_CONFIG.serverUrl = document.getElementById('serverUrl').value;
+      WIFI_CONFIG.zoneName = document.getElementById('zoneName').value;
+      WIFI_CONFIG.messages.subtitle = document.getElementById('zoneSubtitle').value;
+
+      // Générer le fichier config
+      generateConfigOutput();
+      alert("Configuration sauvegardée ! Copiez le contenu de config.js ci-dessous.");
+    }
+
+    // ============================================
+    // GENERER CONFIG.JS
+    // ============================================
+    function generateConfigOutput() {
+      var output = '// ============================================\n';
+      output += '// CONFIGURATION - IUEs/INSAM WiFi Zone\n';
+      output += '// Généré le ' + new Date().toLocaleString('fr-FR') + '\n';
+      output += '// ============================================\n\n';
+      output += 'const WIFI_CONFIG = ' + JSON.stringify(WIFI_CONFIG, null, 2) + ';\n';
+
+      document.getElementById('configOutput').value = output;
+    }
+
+    // ============================================
+    // COPIER / TELECHARGER
+    // ============================================
+    function copyConfig() {
+      saveConfig();
+      var textarea = document.getElementById('configOutput');
+      textarea.select();
+      document.execCommand('copy');
+      alert("Configuration copiée dans le presse-papier !");
+    }
+
+    function downloadConfig() {
+      saveConfig();
+      var content = document.getElementById('configOutput').value;
+      var blob = new Blob([content], { type: 'text/javascript' });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url;
+      a.download = 'config.js';
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+  </script>
+
+</body>
+</html>

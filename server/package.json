@@ -1,0 +1,16 @@
+{
+  "name": "insam-wifi-server",
+  "version": "1.0.0",
+  "description": "Serveur backend WiFi Zone IUEs/INSAM - FreeMoPay + Mikrotik",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.0",
+    "cors": "^2.8.5",
+    "node-routeros": "^1.6.9",
+    "dotenv": "^16.4.5"
+  }
+}
