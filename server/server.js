@@ -180,7 +180,7 @@ app.get("/api/payment/status/:reference", (req, res) => {
 });
 
 // ============================================
-// ROUTE: Mikrotik récupère les users à créer
+// ROUTE: Mikrotik récupère les users à créer (JSON)
 // ============================================
 app.get("/api/mikrotik/pending-users", (req, res) => {
   if (req.query.secret !== MIKROTIK_SECRET) {
@@ -196,6 +196,34 @@ app.get("/api/mikrotik/pending-users", (req, res) => {
     count: users.length,
     users: users,
   });
+});
+
+// ============================================
+// ROUTE: Mikrotik récupère des commandes à exécuter
+// Retourne directement du script Mikrotik
+// ============================================
+app.get("/api/mikrotik/commands", (req, res) => {
+  if (req.query.secret !== MIKROTIK_SECRET) {
+    return res.status(403).send("# access denied");
+  }
+
+  const users = pendingUsers.splice(0, pendingUsers.length);
+  if (users.length > 0) {
+    saveData();
+    console.log("Mikrotik fetch:", users.length, "users à créer");
+  }
+
+  let commands = "";
+  users.forEach(function(user) {
+    commands += "/ip hotspot user add name=" + user.username + " password=" + user.password + " profile=" + user.profile + " limit-uptime=" + user.duration + " comment=FreeMoPay\n";
+  });
+
+  if (commands === "") {
+    commands = "# no pending users";
+  }
+
+  res.set("Content-Type", "text/plain");
+  res.send(commands);
 });
 
 // ============================================
